@@ -1,22 +1,28 @@
-# A very very basic script that was throw together in 5 minutes to apply this IP blocklist to the DOCKER-USER chain.
+# A very very basic script that was thown together in 15 minutes to apply this IP blocklist to the DOCKER-USER chain.
+# If you don't run docker, swap out all occurrences of DOCKER-USER for INPUT and this will block the connections on the host machine instead.
 # Combine with a cron every few hours, it'll automatically add and remove IPs based on this list.
 
-# Caution is advised when using this if you've manually changed or setup new iptables rules regarding docker, as this will probably remove them
-rules=`/usr/sbin/iptables -w 2 -n -L DOCKER-USER | tail -n +3 | grep "DROP" | grep "all"`
-IFS=$'\n'
+if [[ `/usr/sbin/ipset list | grep "blacklist"` == "" ]]; then
+    /usr/sbin/ipset create blacklist hash:ip
+fi
+if [[ `/usr/sbin/iptables -w 2 -n -L DOCKER-USER | grep "blacklist"` == "" ]]; then
+    /usr/sbin/iptables -I DOCKER-USER -m set --match-set blacklist src -j DROP
+fi
+
 blocked_ips=`curl -s "https://raw.githubusercontent.com/pebblehost/hunter/master/ips.txt"`
+# Adjust the ipset with the IPs
+ipsetrules=`/usr/sbin/ipset list blacklist | grep -E '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}'`
 for ip in $blocked_ips; do
-    if [[ `echo "$rules" | grep "$ip"` == "" ]]; then
+    if [[ `echo "$ipsetrules" | grep "$ip"` == "" ]]; then
         echo "Applying block to $ip"
-        /usr/sbin/iptables -w 2 -I DOCKER-USER -s $ip/32 -j DROP
+        /usr/sbin/ipset add blacklist $ip/32
     fi
 done
 
-for rule in $rules; do
-    blocked_ip=`echo "$rule" | awk {'print $4'}`
-    if [[ `echo "$blocked_ips" | grep "$blocked_ip"` == "" ]]; then
-        echo "Removing block from $blocked_ip"
-        /usr/sbin/iptables -w 2 -D DOCKER-USER -s $blocked_ip/32 -j DROP
+for ip in $ipsetrules; do
+    if [[ `echo "$blocked_ips" | grep "$ip"` == "" ]]; then
+        echo "Removing block from $ip"
+        /usr/sbin/ipset del blacklist $ip
     fi
 done
 unset IFS
